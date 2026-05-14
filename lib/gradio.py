@@ -987,7 +987,7 @@ def build_interface(args:dict)->gr.Blocks:
                 outputs = tuple([gr.update(interactive=True) for _ in range(9)])
                 if session and session.get('id', False):
                     enabled_convert_btn = True if session['ebook'] is not None else enabled_convert_btn
-                    visible_buttons = True if session['voice'] is not None else visible_buttons
+                    visible_buttons = True if visible_voice_controls(session, session.get('voice')) else visible_buttons
                 return outputs + (gr.update(interactive=enabled_convert_btn), gr.update(visible=visible_buttons), gr.update(visible=visible_buttons))
 
             def disable_on_custom_upload()->tuple:
@@ -1069,6 +1069,22 @@ def build_interface(args:dict)->gr.Blocks:
                     </div>
                 '''
 
+            def can_use_voice_file(session:dict|None, voice:str|None)->bool:
+                if not (session and session.get('id', False)):
+                    return False
+                return is_voice_file_path(session.get('tts_engine'), voice)
+
+            def visible_voice_controls(session:dict|None, voice:str|None)->bool:
+                return can_use_voice_file(session, voice)
+
+            def voice_player_value(session:dict|None, voice:str|None)->str|None:
+                return voice if can_use_voice_file(session, voice) else None
+
+            def ensure_voice_choice(choice_list:list[tuple[str, str|None]], value:str|None)->list[tuple[str, str|None]]:
+                if value not in (None, '') and not any(existing_value == value for _, existing_value in choice_list):
+                    choice_list.append((value, value))
+                return choice_list
+
             def is_valid_gradio_cache(path):
                 if not path or not os.path.isfile(path):
                     return False
@@ -1116,9 +1132,9 @@ def build_interface(args:dict)->gr.Blocks:
                             visible_ebook_src = True
                         visible_row_split_hours = True if session['output_split'] else False
                         visible_group_custom_model = visible_gr_group_custom_model if session['fine_tuned'] == 'internal' and session['tts_engine'] in tts_engines_with_custom_model else False
-                        visible_voice_buttons = True if session.get('voice') is not None else False
+                        visible_voice_buttons = visible_voice_controls(session, session.get('voice'))
                         visible_custom_model_del_btn = True if session['custom_model'] is not None else False
-                        voice_file = session.get('voice')
+                        voice_file = voice_player_value(session, session.get('voice'))
                         return (
                             gr.update(visible=visible_ebook_src, value=ebook_data, file_count=ebook_file_count),
                             gr.update(visible=visible_ebook_textarea, value=ebook_textarea),
@@ -1338,17 +1354,17 @@ def build_interface(args:dict)->gr.Blocks:
                 try:
                     session = context.get_session(session_id)
                     if not (session and session.get('id', False)):
-                        return gr.update(), gr.update(), gr.update(), gr.update()
+                        return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update()
                     if ebook_mode != ebook_modes['DIRECTORY'] or evt.index is None:
-                        return gr.update(), gr.update(value=''), gr.update(), gr.update(value='', visible=False)
+                        return gr.update(), gr.update(value=''), gr.update(), gr.update(value='', visible=False), gr.update(), gr.update(), gr.update()
                     if session.get('status') != status_tags['READY']:
-                        return gr.update(), gr.update(), gr.update(), gr.update()
+                        return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update()
                     # evt.index can be int or (row, col) tuple — normalise.
                     row = evt.index[0] if isinstance(evt.index, (list, tuple)) else evt.index
                     live_list = ebook_src if isinstance(ebook_src, list) and ebook_src else None
                     ebook_list = live_list if live_list is not None else (session.get('ebook_list') or [])
                     if not isinstance(ebook_list, list) or row < 0 or row >= len(ebook_list):
-                        return gr.update(), gr.update(value=''), gr.update(), gr.update(value='', visible=False)
+                        return gr.update(), gr.update(value=''), gr.update(), gr.update(value='', visible=False), gr.update(), gr.update(), gr.update()
                     abs_path = os.path.abspath(ebook_list[row])
                     session['ebook_selected'] = abs_path
                     if live_list is not None and session.get('ebook_list') != live_list:
@@ -1357,16 +1373,20 @@ def build_interface(args:dict)->gr.Blocks:
                     assigned_voice = voice_map[abs_path] if abs_path in voice_map else session.get('voice')
                     style = build_voice_highlight_css(row)
                     filename = Path(abs_path).name
+                    visible_buttons = visible_voice_controls(session, assigned_voice)
                     return (
                         gr.update(value=assigned_voice, label='Voices'),
                         gr.update(value=style),
                         gr.update(visible=True),
                         gr.update(value=filename, visible=True),
+                        gr.update(value=voice_player_value(session, assigned_voice)),
+                        gr.update(visible=visible_buttons),
+                        gr.update(visible=visible_buttons),
                     )
                 except Exception as e:
                     error = f'select_gr_ebook_src(): {e}'
                     exception_alert(session_id, error)
-                    return gr.update(), gr.update(), gr.update(), gr.update()
+                    return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update()
 
             def change_gr_ebook_textarea(session_id:str, ebook_textarea:str)->None:
                 session = context.get_session(session_id)
@@ -1410,6 +1430,12 @@ def build_interface(args:dict)->gr.Blocks:
                 try:
                     state = {}
                     if f is not None:
+                        session = context.get_session(session_id)
+                        if session and session.get('id', False) and is_ttsapi_engine(session['tts_engine']):
+                            state['type'] = 'warning'
+                            state['msg'] = 'TTSAPI does not use uploaded voice files. Select an API model from the Voices dropdown instead.'
+                            show_alert(session_id, state)
+                            return update_gr_voice_list(session_id)
                         if len(voice_options) > max_custom_voices:
                             error = f'You are allowed to upload a max of {max_custom_voices} voices'
                             state['type'] = 'warning'
@@ -1419,7 +1445,6 @@ def build_interface(args:dict)->gr.Blocks:
                             state['type'] = 'warning'
                             state['msg'] = error
                         else:                  
-                            session = context.get_session(session_id)
                             if session and session.get('id', False):
                                 voice_name = os.path.splitext(os.path.basename(f))[0].replace('&', 'And')
                                 voice_name = get_sanitized(voice_name)
@@ -1461,8 +1486,8 @@ def build_interface(args:dict)->gr.Blocks:
                             session['voice_map'] = voice_map
                         else:
                             session['voice'] = new_voice
-                        visible_voice_buttons = new_voice is not None
-                        return gr.update(value=new_voice), gr.update(visible=visible_voice_buttons), gr.update(visible=visible_voice_buttons)
+                        visible_voice_buttons = visible_voice_controls(session, new_voice)
+                        return gr.update(value=voice_player_value(session, new_voice)), gr.update(visible=visible_voice_buttons), gr.update(visible=visible_voice_buttons)
                 except Exception as e:
                     error = f'change_gr_voice_list(): {e}'
                     exception_alert(session_id, error)
@@ -1473,6 +1498,10 @@ def build_interface(args:dict)->gr.Blocks:
                     if selected is not None:
                         session = context.get_session(session_id)
                         if session and session.get('id', False):
+                            if not can_use_voice_file(session, selected):
+                                error = 'Only local uploaded voice files can be deleted.'
+                                show_alert(session_id, {"type": "warning", "msg": error})
+                                return gr.update(visible=False), gr.update()
                             speaker_path = os.path.abspath(selected)
                             speaker = re.sub(r'\.wav$|\.npz|\.pth$', '', os.path.basename(selected))
                             builtin_root = os.path.join(voices_dir, session['language'])
@@ -1622,6 +1651,19 @@ def build_interface(args:dict)->gr.Blocks:
                     session = context.get_session(session_id)
                     if session and session.get('id', False):
                         models = load_engine_presets(session['tts_engine'])
+                        if is_ttsapi_engine(session['tts_engine']):
+                            current_voice = session.get('voice')
+                            if current_voice not in (None, '') and os.path.exists(str(current_voice)):
+                                current_voice = None
+                                session['voice'] = None
+                            configured_voices = default_engine_settings[session['tts_engine']].get('voices', {})
+                            voice_options = [
+                                (label or model_name, model_name)
+                                for model_name, label in configured_voices.items()
+                            ]
+                            voice_options = ensure_voice_choice(voice_options, current_voice)
+                            voice_options = [('Default', None)] + sorted(voice_options, key=lambda x: x[0].lower())
+                            return gr.update(choices=voice_options, value=current_voice)
                         lang_dir = session['language'] if session['language'] != 'con' else 'con-'  # Bypass Windows CON reserved name
                         file_pattern = "*.wav"
                         eng_options = []
@@ -1698,6 +1740,7 @@ def build_interface(args:dict)->gr.Blocks:
                                     session['voice'] = new_voice_path
                                 else:
                                     session['voice'] = voice_options[0][1]
+                        voice_options = ensure_voice_choice(voice_options, session.get('voice'))
                         return gr.update(choices=voice_options, value=session['voice'])
                 except Exception as e:
                     error = f'update_gr_voice_list(): {e}!'
@@ -1854,7 +1897,13 @@ def build_interface(args:dict)->gr.Blocks:
                     if session and session.get('id', False):
                         if session.get('tts_engine') != engine:
                             models = load_engine_presets(engine)
-                            session['voice'] = None if session['voice'] == default_engine_settings[session['tts_engine']]['voice'] else session['voice']
+                            current_voice = session.get('voice')
+                            if is_ttsapi_engine(engine):
+                                session['voice'] = current_voice if current_voice not in (None, '') and not os.path.exists(str(current_voice)) else None
+                            elif is_ttsapi_engine(session['tts_engine']) and current_voice not in (None, '') and not os.path.exists(str(current_voice)):
+                                session['voice'] = None
+                            else:
+                                session['voice'] = None if current_voice == default_engine_settings[session['tts_engine']]['voice'] else current_voice
                             session['tts_engine'] = engine
                             session['fine_tuned'] = default_fine_tuned
                             visible_xtts = visible_gr_tab_xtts_params if session['tts_engine'] == TTS_ENGINES['XTTSv2'] else False
@@ -2106,7 +2155,15 @@ def build_interface(args:dict)->gr.Blocks:
                                                 override = voice_map[os.path.basename(file)]
                                             else:
                                                 override = default_voice
-                                            if override is not None and not os.path.exists(override):
+                                            if is_ttsapi_engine(args['tts_engine']):
+                                                if override is not None and os.path.exists(str(override)):
+                                                    msg = f'Voice override for {Path(file).name} must be a TTSAPI model id, not a file path. Using default.'
+                                                    show_alert(session_id, {
+                                                        "type": "warning",
+                                                        "msg": msg
+                                                    })
+                                                    override = default_voice if default_voice is None or not os.path.exists(str(default_voice)) else None
+                                            elif override is not None and not os.path.exists(override):
                                                 msg = f'Voice override for {Path(file).name} not found, using default.'
                                                 show_alert(session_id, {
                                                     "type": "warning",
@@ -2472,7 +2529,7 @@ def build_interface(args:dict)->gr.Blocks:
                         if not os.path.exists(session['ebook']):
                             session['ebook'] = session['ebook_src'] = None
                     if isinstance(session.get('voice'), str):
-                        if not os.path.exists(session['voice']):
+                        if not is_ttsapi_engine(session.get('tts_engine')) and not os.path.exists(session['voice']):
                             session['voice'] = session['ebook_src'] = None
                     if isinstance(session.get('custom_model'), str):
                         custom_model_dir = session.get('custom_model_dir')
@@ -2697,7 +2754,7 @@ def build_interface(args:dict)->gr.Blocks:
             gr_ebook_src.select(
                 fn=select_gr_ebook_src,
                 inputs=[gr_session, gr_ebook_mode, gr_ebook_src],
-                outputs=[gr_voice_list, gr_voice_highlight_css, gr_row_voice_player, gr_voice_selected_filename],
+                outputs=[gr_voice_list, gr_voice_highlight_css, gr_row_voice_player, gr_voice_selected_filename, gr_voice_player_hidden, gr_voice_play, gr_voice_del_btn],
                 show_progress='hidden'
             )
             gr_ebook_textarea.change(

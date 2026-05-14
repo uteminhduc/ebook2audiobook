@@ -12,7 +12,8 @@ TTS_ENGINES = {
     "FAIRSEQ": "fairseq",
     "GLOWTTS": "glowtts",
     "TACOTRON2": "tacotron",
-    "YOURTTS": "yourtts"
+    "YOURTTS": "yourtts",
+    "TTSAPI": "ttsapi"
 }
 
 TTS_VOICE_CONVERSION = {
@@ -64,7 +65,7 @@ default_vc_model = TTS_VOICE_CONVERSION['knnvc']['path']
 default_voice_detection_model = 'drewThomasson/segmentation'
 default_speaker = os.path.join(voices_dir, 'eng', 'adult', 'male', 'KumarDahl.wav')
 
-tts_engines_with_inner_speaker = [TTS_ENGINES['VITS'], TTS_ENGINES['FAIRSEQ'], TTS_ENGINES['GLOWTTS'], TTS_ENGINES['TACOTRON2'], TTS_ENGINES['YOURTTS']]
+tts_engines_with_inner_speaker = [TTS_ENGINES['VITS'], TTS_ENGINES['FAIRSEQ'], TTS_ENGINES['GLOWTTS'], TTS_ENGINES['TACOTRON2'], TTS_ENGINES['YOURTTS'], TTS_ENGINES['TTSAPI']]
 tts_engines_with_custom_model = (TTS_ENGINES['XTTSv2'], TTS_ENGINES['VITS'], TTS_ENGINES['FAIRSEQ'])
 
 max_custom_model = 100
@@ -216,5 +217,22 @@ default_engine_settings = {
         "voice": None,
         "voices": {"Machinella-5": "female-en-5", "ElectroMale-2": "male-en-2", 'Machinella-4': 'female-pt-4\n', 'ElectroMale-3': 'male-pt-3\n'},
         "rating": {"VRAM": 1, "CPU": 5, "RAM": 1, "Realism": 2}
+    },
+    TTS_ENGINES['TTSAPI']: {
+        "languages": {"vie": "vi"},
+        "samplerate": 24000,
+        "files": [],
+        "voice": None,
+        "voices": {
+            "ngochuyennew": "ngochuyennew",
+            "duyorynx3175": "duyorynx3175",
+        },
+        "api_url": "http://100.70.138.48:7701/",
+        "model": "ngochuyennew",
+        "speed": 1.0,
+        "format": "wav",
+        "bitrate": 64,
+        "timeout": 300,
+        "rating": {"VRAM": 0, "CPU": 5, "RAM": 1, "Realism": 4}
     }
 }

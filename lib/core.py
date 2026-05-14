@@ -11,6 +11,7 @@ import traceback, socket, unicodedata, urllib.request, uuid, zipfile, fitz, mult
 import ebooklib, psutil, requests, stanza, importlib, queue
 import regex as re, gradio as gr
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Generator, Dict
 from PIL import Image, ImageSequence
 from tqdm import tqdm
@@ -2369,6 +2370,20 @@ def convert_chapters2audio(session_id:str)->bool:
     def _count_sentences(sentences:list)->int:
         return sum(1 for s in sentences if any(c.isalnum() for c in s.strip()))
 
+    def _convert_ttsapi_sentence(sentence_file:str, sentence:str, block_voice:str|None)->tuple:
+        manager = TTSManager(session)
+        return manager.convert_sentence2audio(sentence_file, sentence, block_voice=block_voice)
+
+    def _update_sentence_progress(sentence_text:str)->None:
+        nonlocal global_sent
+        global_sent += 1
+        total_progress = (t.n + 1) / total_sentences
+        if session['is_gui_process']:
+            progress_bar(progress=total_progress, desc=f'{ebook_name} - {sentence_text}')
+        t.set_description(f'{total_progress * 100:.2f}%')
+        print(f' : {sentence_text}')
+        t.update(1)
+
     session = context.get_session(session_id)
     if not (session and session.get('id', False)):
         return False
@@ -2488,38 +2503,73 @@ def convert_chapters2audio(session_id:str)->bool:
                 save_db_stamp(session_id)
                 converted = False
                 block_voice = block.get('voice') or session.get('voice')
-                for j in range(block_len):
-                    if session['cancellation_requested']:
-                        return False
-                    sentence = sentences[j].strip()
-                    if j in valid_idx:
-                        if j >= start_sentence or j in missing_sentences:
-                            if j == start_sentence and start_sentence > 0:
-                                show_alert(session_id, {'type': 'info', 'msg': f'*** Resuming from sentence {global_sent} ***'})
+                if session['tts_engine'] == TTS_ENGINES['TTSAPI']:
+                    pending = []
+                    pending_idx = set()
+                    for j in range(block_len):
+                        if j in valid_idx and (j >= start_sentence or j in missing_sentences):
+                            sentence = sentences[j].strip()
                             sentence_file = os.path.join(block_dir, f'{j}.{default_audio_proc_format}')
-                            run, error = tts_manager.convert_sentence2audio(sentence_file, sentence, block_voice=block_voice)
-                            if not run:
-                                show_alert(session_id, {'type': 'warning', 'msg': error})
-                                return False
-                            converted = True
-                            blocks_current['sentence_resume'] = j
-                            now = time.monotonic()
-                            if not baseline_initialized:
-                                session['blocks_current'] = blocks_current
-                                session['blocks_saved'] = copy.deepcopy(blocks_current)
-                                save_json_blocks(session_id, 'blocks_saved')
-                                baseline_initialized = True
-                            elif now - last_save_time >= 5:
-                                session['blocks_current'] = blocks_current
-                                save_db_stamp(session_id)
-                                last_save_time = now
-                        global_sent += 1
-                        total_progress = (t.n + 1) / total_sentences
-                        if session['is_gui_process']:
-                            progress_bar(progress=total_progress, desc=f'{ebook_name} - {sentence}')
-                        t.set_description(f'{total_progress * 100:.2f}%')
-                        print(f' : {sentence}')
-                        t.update(1)
+                            pending.append((j, sentence, sentence_file))
+                            pending_idx.add(j)
+                    if pending and start_sentence > 0:
+                        show_alert(session_id, {'type': 'info', 'msg': f'*** Resuming from sentence {global_sent} ***'})
+                    for j in range(block_len):
+                        if j in valid_idx and j not in pending_idx:
+                            _update_sentence_progress(sentences[j].strip())
+                    if pending:
+                        if not baseline_initialized:
+                            session['blocks_current'] = blocks_current
+                            session['blocks_saved'] = copy.deepcopy(blocks_current)
+                            save_json_blocks(session_id, 'blocks_saved')
+                            baseline_initialized = True
+                        workers = min(8, len(pending))
+                        with ThreadPoolExecutor(max_workers=workers) as executor:
+                            futures = {
+                                executor.submit(_convert_ttsapi_sentence, sentence_file, sentence, block_voice): (j, sentence)
+                                for j, sentence, sentence_file in pending
+                            }
+                            for future in as_completed(futures):
+                                if session['cancellation_requested']:
+                                    return False
+                                j, sentence = futures[future]
+                                run, error = future.result()
+                                if not run:
+                                    show_alert(session_id, {'type': 'warning', 'msg': error})
+                                    return False
+                                converted = True
+                                _update_sentence_progress(sentence)
+                        blocks_current['sentence_resume'] = block_len - 1
+                        session['blocks_current'] = blocks_current
+                        save_db_stamp(session_id)
+                        last_save_time = time.monotonic()
+                else:
+                    for j in range(block_len):
+                        if session['cancellation_requested']:
+                            return False
+                        sentence = sentences[j].strip()
+                        if j in valid_idx:
+                            if j >= start_sentence or j in missing_sentences:
+                                if j == start_sentence and start_sentence > 0:
+                                    show_alert(session_id, {'type': 'info', 'msg': f'*** Resuming from sentence {global_sent} ***'})
+                                sentence_file = os.path.join(block_dir, f'{j}.{default_audio_proc_format}')
+                                run, error = tts_manager.convert_sentence2audio(sentence_file, sentence, block_voice=block_voice)
+                                if not run:
+                                    show_alert(session_id, {'type': 'warning', 'msg': error})
+                                    return False
+                                converted = True
+                                blocks_current['sentence_resume'] = j
+                                now = time.monotonic()
+                                if not baseline_initialized:
+                                    session['blocks_current'] = blocks_current
+                                    session['blocks_saved'] = copy.deepcopy(blocks_current)
+                                    save_json_blocks(session_id, 'blocks_saved')
+                                    baseline_initialized = True
+                                elif now - last_save_time >= 5:
+                                    session['blocks_current'] = blocks_current
+                                    save_db_stamp(session_id)
+                                    last_save_time = now
+                            _update_sentence_progress(sentence)
                 sent_end = global_sent - 1
                 show_alert(session_id, {'type': 'info', 'msg': f'End of Chapter {ch_num} (block {x})'})
                 if converted or block_changed or missing_sentences:
@@ -3040,6 +3090,12 @@ def get_compatible_tts_engines(language:str)->list[str]:
         if language in cfg.get('languages', {})
     ]
 
+def is_ttsapi_engine(engine:str|None)->bool:
+    return engine == TTS_ENGINES.get('TTSAPI')
+
+def is_voice_file_path(engine:str|None, voice:Any)->bool:
+    return isinstance(voice, str) and os.path.exists(voice) and not is_ttsapi_engine(engine)
+
 def resolve_voice(session_id:str, ebook_src:str)->str|None:
     """
     Returns the voice to use for a given ebook in DIRECTORY mode.
@@ -3054,6 +3110,8 @@ def resolve_voice(session_id:str, ebook_src:str)->str|None:
     voice_map = session.get('voice_map') or {}
     abs_src = os.path.abspath(ebook_src)
     override = voice_map.get(abs_src) or voice_map.get(os.path.basename(ebook_src))
+    if is_ttsapi_engine(session.get('tts_engine')):
+        return override if override not in (None, '') else session.get('voice')
     if override and os.path.exists(override):
         return override
     return session.get('voice')
@@ -3191,16 +3249,20 @@ def convert_ebook(args:dict)->tuple:
                             except ModuleNotFoundError as e:
                                 error = f"No presets module for TTS engine '{session['tts_engine']}': {e}"
                     if session.get('voice'):
-                        voice_name = os.path.splitext(os.path.basename(session['voice']))[0].replace('&', 'And')
-                        voice_name = get_sanitized(voice_name)
-                        final_voice_file = os.path.join(session['voice_dir'], f'{voice_name}.wav')
-                        if not os.path.exists(final_voice_file):
-                            extractor = VoiceExtractor(session, session['voice'], voice_name)
-                            voice_status, msg = extractor.extract_voice()
-                            if voice_status:
-                                session['voice'] = final_voice_file
-                            else:
-                                error = f'VoiceExtractor.extract_voice() failed! {msg}'
+                        if is_ttsapi_engine(session['tts_engine']):
+                            if os.path.exists(str(session['voice'])):
+                                error = 'TTSAPI voice override must be a model id, not a local voice file path.'
+                        else:
+                            voice_name = os.path.splitext(os.path.basename(session['voice']))[0].replace('&', 'And')
+                            voice_name = get_sanitized(voice_name)
+                            final_voice_file = os.path.join(session['voice_dir'], f'{voice_name}.wav')
+                            if not os.path.exists(final_voice_file):
+                                extractor = VoiceExtractor(session, session['voice'], voice_name)
+                                voice_status, msg = extractor.extract_voice()
+                                if voice_status:
+                                    session['voice'] = final_voice_file
+                                else:
+                                    error = f'VoiceExtractor.extract_voice() failed! {msg}'
             if error is None:
                 if session['script_mode'] == NATIVE:
                     is_installed = check_programs('Calibre', 'ebook-convert', '--version')
