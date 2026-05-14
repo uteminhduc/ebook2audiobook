@@ -1661,6 +1661,7 @@ def get_sentences(session_id:str, text:str)->list|None:
 
         lang, tts_engine = session['language'], session['tts_engine']
         max_chars = int(language_mapping[lang]['max_chars'] / 2)
+        sentence_aligned_split = tts_engine == TTS_ENGINES.get('TTSAPI')
 
         # escape all SML tags to not be touched by any text treatment
         text, sml_blocks = escape_sml(text)
@@ -1677,12 +1678,7 @@ def get_sentences(session_id:str, text:str)->list|None:
             hard_list = [text.strip()]
         hard_list = [s.strip() for s in hard_list if s.strip()]
 
-        # PASS 2 — soft punctuation
-        soft_pattern = re.compile(
-            rf"(.*?(?:{'|'.join(map(re.escape, punctuation_split_soft_set))}))(?=\s|$)",
-            re.DOTALL
-        )
-        soft_list = []
+        sentence_list = []
         i = 0
         n = len(hard_list)
         while i < n:
@@ -1700,6 +1696,23 @@ def get_sentences(session_id:str, text:str)->list|None:
                     i += 1
             else:
                 i += 1
+            sentence_list.append(s)
+
+        if sentence_aligned_split:
+            if sentence_list:
+                sentence_list = [restore_sml(s, sml_blocks) for s in sentence_list]
+            return sentence_list
+
+        # PASS 2 — soft punctuation
+        soft_pattern = re.compile(
+            rf"(.*?(?:{'|'.join(map(re.escape, punctuation_split_soft_set))}))(?=\s|$)",
+            re.DOTALL
+        )
+        soft_list = []
+        for s in sentence_list:
+            s = s.strip()
+            if not s:
+                continue
             if len(strip_escaped_sml(s)) <= max_chars:
                 soft_list.append(s)
                 continue
@@ -3542,6 +3555,17 @@ def finalize_audiobook(session_id:str)->tuple:
                 return result(msg, False)
             if not block['keep'] or not block['text'].strip():
                 block['sentences'] = []
+                continue
+            if session['tts_engine'] == TTS_ENGINES['TTSAPI']:
+                sentences_list = get_sentences(session_id, block['text'])
+                if sentences_list is None:
+                    error = 'No sentences found!'
+                    return result(error, False)
+                if block.get('sentences', []) != sentences_list:
+                    print(f'Block {idx} — refreshing sentence-aligned split for ttsapi')
+                else:
+                    print(f'Block {idx} — sentences already aligned for ttsapi')
+                block['sentences'] = sentences_list
                 continue
             if block.get('sentences', []):
                 print(f'Block {idx} — sentences already split, skipping')
