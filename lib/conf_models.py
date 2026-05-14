@@ -229,7 +229,7 @@ default_engine_settings = {
         },
         "api_url": "http://100.70.138.48:7701/",
         "model": "ngochuyennew",
-        "speed": 1.0,
+        "speed": 0.9,
         "format": "wav",
         "bitrate": 64,
         "timeout": 300,
