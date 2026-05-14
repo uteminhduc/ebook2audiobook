@@ -2369,6 +2369,16 @@ def convert_chapters2audio(session_id:str)->bool:
         if os.path.isdir(block_dir):
             shutil.rmtree(block_dir)
 
+    def _sentence_needs_audio(sentence:str)->bool:
+        text = str(sentence or '').strip()
+        if not text:
+            return False
+        if SML_TAG_PATTERN.fullmatch(text):
+            return True
+        if any(c.isalnum() for c in text):
+            return True
+        return bool(re.search(r'[.!?,;:\-–—…]', text))
+
     def _check_block_sentences(block_id:str, sentences:list)->set:
         block_dir = os.path.join(session['sentences_dir'], block_id)
         missing = set()
@@ -2381,7 +2391,7 @@ def convert_chapters2audio(session_id:str)->bool:
         return missing
 
     def _count_sentences(sentences:list)->int:
-        return sum(1 for s in sentences if any(c.isalnum() for c in s.strip()))
+        return sum(1 for s in sentences if _sentence_needs_audio(s))
 
     def _convert_ttsapi_sentence(sentence_file:str, sentence:str, block_voice:str|None)->tuple:
         manager = TTSManager(session)
@@ -2476,7 +2486,7 @@ def convert_chapters2audio(session_id:str)->bool:
                 block_id = block['id']
                 sentences = block['sentences']
                 block_len = len(sentences)
-                valid_idx = {i for i,s in enumerate(sentences) if any(c.isalnum() for c in s.strip())}
+                valid_idx = {i for i,s in enumerate(sentences) if _sentence_needs_audio(s)}
                 last_idx = block_len - 1
                 sent_start = global_sent
                 current_hash = block_hash(block)
@@ -2507,6 +2517,10 @@ def convert_chapters2audio(session_id:str)->bool:
                 elif x == block_resume and not block_changed:
                     if sentence_resume == 0 and os.path.isdir(block_dir):
                         shutil.rmtree(block_dir)
+                    else:
+                        missing_sentences = _check_block_sentences(block_id, sentences)
+                        if missing_sentences:
+                            show_alert(session_id, {'type': 'warning', 'msg': f'Block {x} has {len(missing_sentences)} missing audio files, reconverting…'})
                     start_sentence = sentence_resume
                 show_alert(session_id, {'type': 'info', 'msg': f'Chapter {ch_num} (block {x}) containing {block_len} sentences…'})
                 os.makedirs(block_dir, exist_ok=True)

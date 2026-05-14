@@ -141,8 +141,6 @@ class TTSApi(TTSUtils, TTSRegistry, name='ttsapi'):
                         return False, result
                     combined_audio = result
                     continue
-                if not any(c.isalnum() for c in part):
-                    continue
                 model_name = self.params['inline_voice'] or self.params['current_voice']
                 audio_bytes = self._request_audio(part, model_name)
                 tmp_dir = os.path.join(self.session['process_dir'], 'tmp')
@@ -154,6 +152,8 @@ class TTSApi(TTSUtils, TTSRegistry, name='ttsapi'):
                 combined_audio += AudioSegment.from_file(tmp_input, format=self.params['format'])
                 Path(tmp_input).unlink(missing_ok=True)
                 tmp_input = None
+            if len(combined_audio) == 0:
+                combined_audio += AudioSegment.silent(duration=400, frame_rate=self.params['samplerate'])
             tmp_dir = os.path.join(self.session['process_dir'], 'tmp')
             os.makedirs(tmp_dir, exist_ok=True)
             tmp_output_handle = tempfile.NamedTemporaryFile(dir=tmp_dir, suffix='.wav', delete=False)
