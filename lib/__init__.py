@@ -21,7 +21,7 @@ from .conf_lang import (
 )
 
 from .conf_models import (
-    TTS_ENGINES, TTS_VOICE_CONVERSION, TTS_SML, SML_TAG_PATTERN, IPA_REMAINING_PATTERN, sml_escape_tag, default_fine_tuned, default_tts_engine, 
+    TTS_ENGINES, TTS_VOICE_CONVERSION, TTS_SML, SML_TAG_PATTERN, IPA_REMAINING_PATTERN, sml_escape_tag, default_fine_tuned, default_tts_engine,
     default_engine_settings, default_vc_model, default_voice_detection_model, tts_engines_with_inner_speaker, tts_engines_with_custom_model,
     loaded_tts, xtts_builtin_speakers_list,
     max_custom_model, max_custom_voices, voices_dir

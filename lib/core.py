@@ -3659,6 +3659,8 @@ def restore_session_from_data(data:dict, session:DictProxy, force:bool, filter_k
                     if not force:
                         if value is None and session[key] is not None:
                             continue
+                    if key == 'tts_engine' and value == 'nghiemtts':
+                        value = TTS_ENGINES['TTSAPI']
                     session[key] = value
     except Exception as e:
         DependencyError(e)
