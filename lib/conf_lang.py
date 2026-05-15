@@ -664,6 +664,7 @@ chapter_word_mapping = {
     "jav": ["bab", "bagean", "mazmur", "bagéan", "paragraf", "artikel", "jilid"],
     "tam": ["அத்தியாயம்", "பகுதி", "சங்கீதம்", "பிரிவு", "பத்தி", "அம்சம்", "தொகுதி"],
     "tel": ["అధ్యాయం", "భాగం", "కీర్తన", "విభాగం", "పేరా", "ఆర్టికల్", "ఖండం"],
+    "vie": ["chương", "chuong", "phần", "phan", "quyển", "quyen", "hồi", "hoi", "mục", "muc"],
     "yor": ["ori", "apa", "orin", "ipin", "abala", "abala", "iwe"]
 }
 

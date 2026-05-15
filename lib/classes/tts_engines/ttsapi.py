@@ -62,6 +62,9 @@ class TTSApi(TTSUtils, TTSRegistry, name='ttsapi'):
         tag = m.group('tag')
         close = bool(m.group('close'))
         value = m.group('value')
+        if tag == 'pause' and self.session.get('tts_engine') == TTS_ENGINES['TTSAPIV2']:
+            tag = 'break'
+            value = None
         if tag == 'break':
             silence_time = float(int(random.uniform(0.3, 0.5) * 100) / 100)
             return True, combined_audio + AudioSegment.silent(duration=int(silence_time * 1000), frame_rate=self.params['samplerate'])

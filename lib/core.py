@@ -1603,6 +1603,98 @@ def get_sentences(session_id:str, text:str)->list|None:
             out.append(rest.strip())
         return out
 
+    def get_escaped_sml_block(ch:str)->str|None:
+        idx = ord(ch) - sml_escape_tag
+        if 0 <= idx < len(sml_blocks):
+            return sml_blocks[idx]
+        return None
+
+    def normalize_pause_to_break(text:str)->str:
+        normalized = []
+        for ch in text:
+            sml_block = get_escaped_sml_block(ch)
+            if not sml_block:
+                normalized.append(ch)
+                continue
+            m = SML_TAG_PATTERN.fullmatch(sml_block)
+            if m and not m.group('close') and m.group('tag') == 'pause':
+                normalized.append(sml_token('break'))
+            else:
+                normalized.append(ch)
+        return ''.join(normalized)
+
+    def is_structural_break_char(ch:str)->bool:
+        sml_block = get_escaped_sml_block(ch)
+        if not sml_block:
+            return False
+        m = SML_TAG_PATTERN.fullmatch(sml_block)
+        return bool(m and not m.group('close') and m.group('tag') in ('break', 'pause'))
+
+    def split_paragraph_aligned(text:str)->list[str]:
+        paragraphs = []
+        current = []
+        for ch in text:
+            current.append(ch)
+            if is_structural_break_char(ch):
+                paragraph = ''.join(current).strip()
+                if paragraph:
+                    paragraphs.append(paragraph)
+                current = []
+        tail = ''.join(current).strip()
+        if tail:
+            paragraphs.append(tail)
+        if not paragraphs and text.strip():
+            paragraphs = [text.strip()]
+
+        result = []
+        for paragraph in paragraphs:
+            if clean_len(paragraph) <= max_chars:
+                result.append(paragraph)
+                continue
+            result.extend(split_at_space_limit(paragraph))
+        return result
+
+    def split_structural_units(text:str)->list[tuple[str, str]]:
+        units = []
+        current = []
+        for ch in text:
+            if is_structural_break_char(ch):
+                units.append((''.join(current).strip(), ch))
+                current = []
+            else:
+                current.append(ch)
+        tail = ''.join(current).strip()
+        if tail or not units:
+            units.append((tail, ''))
+        return units
+
+    def join_structural_units(units:list[tuple[str, str]])->str:
+        rebuilt = []
+        for segment, separator in units:
+            if not segment:
+                continue
+            rebuilt.append(segment)
+            if separator:
+                rebuilt.append(separator)
+        return ''.join(rebuilt).strip()
+
+    def drop_leading_chapter_heading_units(text:str)->str:
+        units = split_structural_units(text)
+        if not units:
+            return text
+        index = 0
+        while index < len(units):
+            plain = strip_escaped_sml(units[index][0]).strip()
+            if not plain:
+                index += 1
+                continue
+            if not is_chapter_heading_text(plain, lang):
+                break
+            index += 1
+        if index == 0:
+            return text
+        return join_structural_units(units[index:])
+
     def segment_ideogramms(text:str)->list[str]:
         result = []
         try:
@@ -1661,12 +1753,17 @@ def get_sentences(session_id:str, text:str)->list|None:
 
         lang, tts_engine = session['language'], session['tts_engine']
         max_chars = int(language_mapping[lang]['max_chars'] / 2)
-        sentence_aligned_split = is_ttsapi_engine(tts_engine)
+        sentence_aligned_split = tts_engine == TTS_ENGINES['TTSAPI']
+        paragraph_aligned_split = tts_engine == TTS_ENGINES['TTSAPIV2']
 
         # escape all SML tags to not be touched by any text treatment
         text, sml_blocks = escape_sml(text)
 
         assert not SML_TAG_PATTERN.search(text)
+
+        text = drop_leading_chapter_heading_units(text)
+        if not strip_escaped_sml(text).strip():
+            return []
 
         # PASS 1 — hard punctuation
         hard_pattern = re.compile(
@@ -1702,6 +1799,13 @@ def get_sentences(session_id:str, text:str)->list|None:
             if sentence_list:
                 sentence_list = [restore_sml(s, sml_blocks) for s in sentence_list]
             return sentence_list
+
+        if paragraph_aligned_split:
+            text = normalize_pause_to_break(text)
+            paragraph_list = split_paragraph_aligned(text)
+            if paragraph_list:
+                paragraph_list = [restore_sml(s, sml_blocks) for s in paragraph_list]
+            return paragraph_list
 
         # PASS 2 — soft punctuation
         soft_pattern = re.compile(
@@ -2348,6 +2452,167 @@ def normalize_text(text:str, lang:str, lang_iso1:str, tts_engine:str)->str:
     text = ' '.join(text.split())
     return text
 
+
+chapter_index_words = MappingProxyType({
+    "eng": frozenset({
+        "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+        "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth",
+        "number", "no",
+    }),
+    "vie": frozenset({
+        "thứ", "thu", "nhất", "nhat", "một", "mot", "hai", "ba", "bốn", "bon", "tư", "tu",
+        "năm", "nam", "lăm", "lam", "sáu", "sau", "bảy", "bay", "bẩy", "tam", "tám",
+        "chín", "chin", "mười", "muoi", "mươi", "linh", "lẻ", "le", "trăm", "tram", "ngàn",
+        "ngan", "nghìn", "nghin", "triệu", "trieu", "vạn", "van", "số", "so",
+    }),
+})
+
+compact_chapter_prefixes = MappingProxyType({
+    "eng": frozenset({"c", "ch", "chap"}),
+    "vie": frozenset({"c", "ch", "chap"}),
+})
+
+
+def strip_sml_tags(text:str)->str:
+    return SML_TAG_PATTERN.sub(' ', text or '')
+
+
+def normalize_heading_text(text:str)->str:
+    return re.sub(r'\s+', ' ', strip_sml_tags(text)).strip()
+
+
+def get_language_chapter_words(lang:str)->list[str]:
+    words = list(chapter_word_mapping.get(lang, []))
+    if lang == 'vie':
+        words.extend(["chương", "phần", "quyển", "hồi", "mục", "chapter", "chap"])
+    seen = set()
+    ordered = []
+    for word in sorted(words, key=len, reverse=True):
+        key = word.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(word)
+    return ordered
+
+
+def get_compact_chapter_prefixes(lang:str)->list[str]:
+    prefixes = set(compact_chapter_prefixes.get(lang, frozenset()))
+    if lang == 'vie':
+        prefixes.update({"c", "ch", "chap"})
+    return sorted(prefixes, key=len, reverse=True)
+
+
+def is_chapter_index_token(token:str, lang:str)->bool:
+    token = token.casefold()
+    if token.isdigit():
+        return True
+    if re.fullmatch(r'[ivxlcdm]+', token, flags=re.IGNORECASE):
+        return True
+    if re.fullmatch(r'\d+[a-zA-Z]?$', token):
+        return True
+    return token in chapter_index_words.get(lang, frozenset())
+
+
+def is_chapter_heading_text(text:str, lang:str)->bool:
+    candidate = normalize_heading_text(text)
+    if not candidate or len(candidate) > 120:
+        return False
+    compact_prefixes = get_compact_chapter_prefixes(lang)
+    if compact_prefixes:
+        compact_re = '|'.join(map(re.escape, compact_prefixes))
+        compact_match = re.match(
+            rf'^[\s\[\(\{{<【《「『"“‘\']*(?P<prefix>{compact_re})\.?\s*(?P<index>\d+[a-zA-Z]?|[ivxlcdm]+)\b(?P<tail>.*)$',
+            candidate,
+            flags=re.IGNORECASE | re.UNICODE
+        )
+        if compact_match:
+            tail = compact_match.group('tail').lstrip()
+            if not tail or re.match(r'^[:.,;|/\-–—_~\[\]\(\)\{\}<>【】《》「」『』"“”‘’]', tail):
+                return True
+    chapter_words = get_language_chapter_words(lang)
+    if not chapter_words:
+        return False
+    chapter_words_re = '|'.join(map(re.escape, chapter_words))
+    m = re.match(
+        rf'^[\s\[\(\{{<【《「『"“‘\']*(?P<word>{chapter_words_re})(?=\b|\d)(?P<rest>.*)$',
+        candidate,
+        flags=re.IGNORECASE | re.UNICODE
+    )
+    if not m:
+        return False
+    rest = re.sub(r'^[\s:.\-–—]+', '', m.group('rest')).strip()
+    if not rest:
+        return True
+    lead = re.split(r'\s*[:.,;|/\-–—_~\[\]\(\)\{\}<>【】《》「」『』"“”‘’]\s*', rest, maxsplit=1)[0].strip()
+    lead_tokens = [token.casefold() for token in re.findall(r'[\p{L}\p{N}]+', lead)]
+    if not lead_tokens or len(lead_tokens) > 5:
+        return False
+    return all(is_chapter_index_token(token, lang) for token in lead_tokens)
+
+
+def extract_leading_chapter_heading_text(text:str, lang:str)->str|None:
+    if not text or not text.strip():
+        return None
+    last_end = 0
+    segments = []
+    for m in SML_TAG_PATTERN.finditer(text):
+        if m.group('close') or m.group('tag') not in ('break', 'pause'):
+            continue
+        segment = text[last_end:m.start()].strip()
+        if segment:
+            segments.append(segment)
+        last_end = m.end()
+    tail = text[last_end:].strip()
+    if tail:
+        segments.append(tail)
+    if not segments:
+        segments = [text.strip()]
+    for segment in segments:
+        candidate = normalize_heading_text(segment)
+        if not candidate:
+            continue
+        if is_chapter_heading_text(candidate, lang):
+            return candidate
+        break
+    return None
+
+
+def strip_leading_chapter_heading_text(text:str, lang:str)->str:
+    if not text or not text.strip():
+        return text
+    units = []
+    current_start = 0
+    for m in SML_TAG_PATTERN.finditer(text):
+        if m.group('close') or m.group('tag') not in ('break', 'pause'):
+            continue
+        units.append((text[current_start:m.start()].strip(), m.group(0)))
+        current_start = m.end()
+    tail = text[current_start:].strip()
+    if tail or not units:
+        units.append((tail, ''))
+
+    index = 0
+    while index < len(units):
+        segment = normalize_heading_text(units[index][0])
+        if not segment:
+            index += 1
+            continue
+        if not is_chapter_heading_text(segment, lang):
+            break
+        index += 1
+    if index == 0:
+        return text
+
+    rebuilt = []
+    for segment, separator in units[index:]:
+        if not segment:
+            continue
+        rebuilt.append(segment)
+        if separator:
+            rebuilt.append(separator)
+    return ''.join(rebuilt).strip()
+
 def block_hash(block: dict) -> str:
     return hashlib.sha1(
         '|'.join((
@@ -2453,7 +2718,7 @@ def convert_chapters2audio(session_id:str)->bool:
                 blocks_current['blocks'] = blocks
                 session['blocks_current'] = blocks_current
                 save_db_blocks(session_id)
-        total_chapters = sum(1 for b in blocks if b['keep'] and b['text'].strip())
+        total_chapters = sum(1 for b in blocks if b['keep'] and b.get('sentences'))
         if total_chapters == 0:
             show_alert(session_id, {'type': 'warning', 'msg': 'No chapters found!'})
             return False
@@ -2478,7 +2743,7 @@ def convert_chapters2audio(session_id:str)->bool:
         show_alert(session_id, {'type': 'info', 'msg': msg})
         with tqdm(total=total_sentences, desc='0.00%', bar_format='{desc}: {n_fmt}/{total_fmt} ', unit='step', initial=0) as t:
             for x, block in enumerate(blocks):
-                if not (block['keep'] and block['text'].strip()):
+                if not (block['keep'] and block.get('sentences')):
                     continue
                 if session['cancellation_requested']:
                     return False
@@ -2854,12 +3119,8 @@ def combine_audio_chapters(session_id:str)->list[str]|None:
         chapter_titles = []
         chapter_positions = []
         for x, block in enumerate(session['blocks_current']['blocks']):
-            if not (block['keep'] and block['text'].strip()):
+            if not (block['keep'] and block.get('sentences')):
                 continue
-            if not block.get('sentences'):
-                error = f"Block {x} (id {block['id']}) has no sentences but is marked keep"
-                print(error)
-                return None
             block_id = block['id']
             fname = f'{block_id}.{default_audio_proc_format}'
             fpath = os.path.join(session['chapters_dir'], fname)
@@ -2868,7 +3129,17 @@ def combine_audio_chapters(session_id:str)->list[str]|None:
                 print(error)
                 return None
             chapter_files.append(fname)
-            chapter_titles.append(block['sentences'][0])
+            chapter_title = extract_leading_chapter_heading_text(block.get('text') or '', session['language'])
+            if not chapter_title:
+                chapter_title = next(
+                    (
+                        normalize_heading_text(sentence)
+                        for sentence in block.get('sentences', [])
+                        if normalize_heading_text(sentence)
+                    ),
+                    f'Block {x + 1}'
+                )
+            chapter_titles.append(chapter_title)
             chapter_positions.append(x)
         is_gui_process = session['is_gui_process']
         if len(chapter_files) == 0:
@@ -3058,6 +3329,7 @@ def ellipsize_utf8_bytes(s:str, max_bytes:int, ellipsis:str='…')->str:
 def sanitize_meta_chapter_title(title:str, max_bytes:int=140)->str:
     # avoid None and embedded NULs which some muxers accidentally keep
     title = (title or '').replace('\x00', '')
+    title = title.replace(sml_token('break'), ' ')
     title = title.replace(sml_token('pause'), '')
     return ellipsize_utf8_bytes(title, max_bytes=max_bytes, ellipsis='…')
 
@@ -3575,10 +3847,15 @@ def finalize_audiobook(session_id:str)->tuple:
                 if sentences_list is None:
                     error = 'No sentences found!'
                     return result(error, False)
+                if not sentences_list:
+                    print(f'Block {idx} — no spoken content after title stripping, skipping')
+                    block['sentences'] = []
+                    continue
+                split_mode = 'paragraph-aligned' if session['tts_engine'] == TTS_ENGINES['TTSAPIV2'] else 'sentence-aligned'
                 if block.get('sentences', []) != sentences_list:
-                    print(f'Block {idx} — refreshing sentence-aligned split for ttsapi')
+                    print(f'Block {idx} — refreshing {split_mode} split for ttsapi')
                 else:
-                    print(f'Block {idx} — sentences already aligned for ttsapi')
+                    print(f'Block {idx} — {split_mode} split already up to date for ttsapi')
                 block['sentences'] = sentences_list
                 continue
             if block.get('sentences', []):
@@ -3588,6 +3865,10 @@ def finalize_audiobook(session_id:str)->tuple:
             if sentences_list is None:
                 error = 'No sentences found!'
                 return result(error, False)
+            if not sentences_list:
+                print(f'Block {idx} — no spoken content after title stripping, skipping')
+                block['sentences'] = []
+                continue
             block['sentences'] = sentences_list
         blocks_current['blocks'] = blocks
         session['blocks_current'] = blocks_current

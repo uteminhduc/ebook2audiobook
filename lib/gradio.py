@@ -2347,6 +2347,7 @@ def build_interface(args:dict)->gr.Blocks:
                 session = context.get_session(session_id)
                 if session and session.get('id', False):
                     if session['status'] in [status_tags['EDIT']]:
+                        lang = session.get('language')
                         start = int(page) * page_size
                         updates = []
                         expands = []
@@ -2359,7 +2360,7 @@ def build_interface(args:dict)->gr.Blocks:
                                 updates.append(gr.update(label=f'Block {idx}', visible=True, open=exp))
                                 updates.append(gr.update(value=b['keep']))
                                 updates.append(gr.update(value=b.get('voice'), choices=voice_options))
-                                updates.append(gr.update(value=b['text']))
+                                updates.append(gr.update(value=strip_leading_chapter_heading_text(b['text'], lang)))
                             else:
                                 expands.append(False)
                                 updates.append(gr.update(visible=False))
@@ -2435,7 +2436,7 @@ def build_interface(args:dict)->gr.Blocks:
                 session = context.get_session(session_id)
                 if session and session.get('id', False):
                     text = session['blocks_orig']['blocks'][block_id]['text']
-                    return gr.update(value=text)
+                    return gr.update(value=strip_leading_chapter_heading_text(text, session.get('language')))
                 return gr.update()
 
             def collect_page(page:int, blocks:list[dict], *args)->list[dict]:
