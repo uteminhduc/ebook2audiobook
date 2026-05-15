@@ -9,8 +9,9 @@ def load_engine_presets(engine:str)->Dict[str, Any]:
     with _lock:
         if engine in _presets_cache:
             return _presets_cache[engine]
+        module_name = engine.replace('-', '_')
         try:
-            module = importlib.import_module(f"lib.classes.tts_engines.presets.{engine}_presets")
+            module = importlib.import_module(f"lib.classes.tts_engines.presets.{module_name}_presets")
         except Exception as e:
             raise ImportError(f"Failed to import presets for engine '{engine}'") from e
         if not hasattr(module, "models"):

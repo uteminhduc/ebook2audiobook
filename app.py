@@ -183,7 +183,7 @@ SML tags available:
     in ./lib/lang.py sed as default if not present. All compatible language codes are in ./lib/lang.py''')
     headless_optional_group = parser.add_argument_group('optional parameters')
     headless_optional_group.add_argument(cli_options[9], type=str, default=None, help='''(Optional) Path to the voice cloning file for TTS engine. 
-    For `ttsapi`, this value is treated as the API model id override instead. Uses the default voice/model if not present.''')
+    For `ttsapi` and `ttsapi-v2`, this value is treated as the API voice/model id override instead. Uses the default voice/model if not present.''')
     headless_optional_group.add_argument(cli_options[10], type=str, default=None, help='''(Optional, --ebooks_dir only) Path to a JSON file mapping ebook path -> voice path.
     Each entry overrides --voice for that specific ebook. Missing/null entries fall back to --voice.
     Keys may be absolute paths or basenames. Example:
@@ -309,7 +309,7 @@ SML tags available:
                 error = 'Error: You can only specify one of --ebook, --ebooks_dir, or --text in headless mode.'
             else:
                 if args.get('voice'):
-                    if args['tts_engine'] != TTS_ENGINES['TTSAPI'] and os.path.exists(args['voice']):
+                    if args['tts_engine'] not in (TTS_ENGINES['TTSAPI'], TTS_ENGINES['TTSAPIV2']) and os.path.exists(args['voice']):
                         args['voice'] = os.path.abspath(args['voice'])
                 if args.get('custom_model', None) is not None:
                     if os.path.exists(args['custom_model']):

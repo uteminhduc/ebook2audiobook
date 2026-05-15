@@ -13,7 +13,8 @@ TTS_ENGINES = {
     "GLOWTTS": "glowtts",
     "TACOTRON2": "tacotron",
     "YOURTTS": "yourtts",
-    "TTSAPI": "ttsapi"
+    "TTSAPI": "ttsapi",
+    "TTSAPIV2": "ttsapi-v2"
 }
 
 TTS_VOICE_CONVERSION = {
@@ -65,7 +66,7 @@ default_vc_model = TTS_VOICE_CONVERSION['knnvc']['path']
 default_voice_detection_model = 'drewThomasson/segmentation'
 default_speaker = os.path.join(voices_dir, 'eng', 'adult', 'male', 'KumarDahl.wav')
 
-tts_engines_with_inner_speaker = [TTS_ENGINES['VITS'], TTS_ENGINES['FAIRSEQ'], TTS_ENGINES['GLOWTTS'], TTS_ENGINES['TACOTRON2'], TTS_ENGINES['YOURTTS'], TTS_ENGINES['TTSAPI']]
+tts_engines_with_inner_speaker = [TTS_ENGINES['VITS'], TTS_ENGINES['FAIRSEQ'], TTS_ENGINES['GLOWTTS'], TTS_ENGINES['TACOTRON2'], TTS_ENGINES['YOURTTS'], TTS_ENGINES['TTSAPI'], TTS_ENGINES['TTSAPIV2']]
 tts_engines_with_custom_model = (TTS_ENGINES['XTTSv2'], TTS_ENGINES['VITS'], TTS_ENGINES['FAIRSEQ'])
 
 max_custom_model = 100
@@ -232,6 +233,29 @@ default_engine_settings = {
         "speed": 0.9,
         "format": "wav",
         "bitrate": 64,
+        "timeout": 300,
+        "rating": {"VRAM": 0, "CPU": 5, "RAM": 1, "Realism": 4}
+    },
+    TTS_ENGINES['TTSAPIV2']: {
+        "languages": {"vie": "vi"},
+        "samplerate": 24000,
+        "files": [],
+        "voice": "fr-FR-RemyMultilingualNeural",
+        "voices": {
+            "fr-FR-RemyMultilingualNeural": "Remy Multilingual (FR male)",
+            "vi-VN-NamMinhNeural": "Nam Minh (VI male)",
+            "vi-VN-HoaiMyNeural": "Hoai My (VI female)",
+            "en-US-AndrewMultilingualNeural": "Andrew Multilingual (US male)",
+            "en-US-AvaMultilingualNeural": "Ava Multilingual (US female)",
+            "en-US-BrianMultilingualNeural": "Brian Multilingual (US male)",
+            "en-US-EmmaMultilingualNeural": "Emma Multilingual (US female)",
+        },
+        "api_url": "http://100.70.138.48:5050/v1/audio/speech",
+        "api_key": "your_api_key_here",
+        "payload_schema": "openai_speech",
+        "model": "tts-1",
+        "speed": 1.0,
+        "format": "mp3",
         "timeout": 300,
         "rating": {"VRAM": 0, "CPU": 5, "RAM": 1, "Realism": 4}
     }

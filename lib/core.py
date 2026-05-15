@@ -1661,7 +1661,7 @@ def get_sentences(session_id:str, text:str)->list|None:
 
         lang, tts_engine = session['language'], session['tts_engine']
         max_chars = int(language_mapping[lang]['max_chars'] / 2)
-        sentence_aligned_split = tts_engine == TTS_ENGINES.get('TTSAPI')
+        sentence_aligned_split = is_ttsapi_engine(tts_engine)
 
         # escape all SML tags to not be touched by any text treatment
         text, sml_blocks = escape_sml(text)
@@ -2530,7 +2530,7 @@ def convert_chapters2audio(session_id:str)->bool:
                 save_db_stamp(session_id)
                 converted = False
                 block_voice = block.get('voice') or session.get('voice')
-                if session['tts_engine'] == TTS_ENGINES['TTSAPI']:
+                if is_ttsapi_engine(session['tts_engine']):
                     pending = []
                     pending_idx = set()
                     for j in range(block_len):
@@ -3118,7 +3118,7 @@ def get_compatible_tts_engines(language:str)->list[str]:
     ]
 
 def is_ttsapi_engine(engine:str|None)->bool:
-    return engine == TTS_ENGINES.get('TTSAPI')
+    return engine in (TTS_ENGINES.get('TTSAPI'), TTS_ENGINES.get('TTSAPIV2'))
 
 def is_voice_file_path(engine:str|None, voice:Any)->bool:
     return isinstance(voice, str) and os.path.exists(voice) and not is_ttsapi_engine(engine)
@@ -3570,7 +3570,7 @@ def finalize_audiobook(session_id:str)->tuple:
             if not block['keep'] or not block['text'].strip():
                 block['sentences'] = []
                 continue
-            if session['tts_engine'] == TTS_ENGINES['TTSAPI']:
+            if is_ttsapi_engine(session['tts_engine']):
                 sentences_list = get_sentences(session_id, block['text'])
                 if sentences_list is None:
                     error = 'No sentences found!'

@@ -27,7 +27,10 @@ class TTSApi(TTSUtils, TTSRegistry, name='ttsapi'):
             settings = default_engine_settings[self.session['tts_engine']]
             self.params['samplerate'] = model_cfg['samplerate']
             self.params['api_url'] = str(settings.get('api_url') or '').strip()
+            self.params['api_key'] = str(settings.get('api_key') or '').strip()
+            self.params['payload_schema'] = str(settings.get('payload_schema') or 'ttsapi').strip()
             self.params['default_model'] = str(settings.get('model') or '').strip()
+            self.params['default_voice'] = str(settings.get('voice') or self.params['default_model'] or '').strip()
             self.params['speed'] = float(settings.get('speed', 1))
             self.params['format'] = str(settings.get('format', 'wav') or 'wav').strip().lower()
             self.params['bitrate'] = int(settings.get('bitrate', 64))
@@ -40,7 +43,8 @@ class TTSApi(TTSUtils, TTSRegistry, name='ttsapi'):
             raise ValueError(error)
 
     def _set_voice(self, voice:str|None)->tuple:
-        current_model = voice if voice not in (None, '') else self.params['default_model']
+        fallback = self.params['default_voice'] if self.params['payload_schema'] == 'openai_speech' else self.params['default_model']
+        current_model = voice if voice not in (None, '') else fallback
         if current_model in (None, ''):
             error = 'TTSAPI configuration error: missing model selection.'
             return None, error
@@ -77,17 +81,30 @@ class TTSApi(TTSUtils, TTSRegistry, name='ttsapi'):
         return True, combined_audio
 
     def _request_audio(self, text:str, model:str)->bytes:
-        payload = json.dumps({
-            "text": text,
-            "model": model,
-            "speed": self.params['speed'],
-            "format": self.params['format'],
-            "bitrate": self.params['bitrate'],
-        }).encode('utf-8')
+        if self.params['payload_schema'] == 'openai_speech':
+            payload_data = {
+                "model": self.params['default_model'],
+                "input": text,
+                "voice": model,
+                "response_format": self.params['format'],
+                "speed": self.params['speed'],
+            }
+        else:
+            payload_data = {
+                "text": text,
+                "model": model,
+                "speed": self.params['speed'],
+                "format": self.params['format'],
+                "bitrate": self.params['bitrate'],
+            }
+        payload = json.dumps(payload_data, ensure_ascii=False).encode('utf-8')
+        headers = {'Content-Type': 'application/json; charset=utf-8'}
+        if self.params['api_key']:
+            headers['Authorization'] = f"Bearer {self.params['api_key']}"
         req = urllib_request.Request(
             self.params['api_url'],
             data=payload,
-            headers={'Content-Type': 'application/json'},
+            headers=headers,
             method='POST'
         )
         with urllib_request.urlopen(req, timeout=self.params['timeout']) as response:
@@ -186,3 +203,7 @@ class TTSApi(TTSUtils, TTSRegistry, name='ttsapi'):
         if self._build_vtt_file(all_sentences):
             return True
         return False
+
+
+class TTSApiV2(TTSApi, name='ttsapi-v2'):
+    pass

@@ -6,4 +6,4 @@ from .fairseq import Fairseq
 from .tortoise import Tortoise
 from .tacotron import Tacotron2
 from .yourtts import YourTTS
-from .ttsapi import TTSApi
+from .ttsapi import TTSApi, TTSApiV2
